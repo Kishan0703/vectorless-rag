@@ -127,7 +127,3 @@ python -m py_compile main.py
 - Never commit `.env` or API keys
 - Rotate keys if exposed
 - Restrict CORS origins before deploying to production
-
-### License
-
-Add your preferred license here (for example, MIT).
