@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Sun, Moon, Plus, ArrowUp, LayoutList, ChevronDown, FileText, Bot, Loader2 } from 'lucide-react'
 import './index.css'
@@ -18,11 +18,60 @@ type TreeNode = {
   nodes?: TreeNode[]
 }
 
-const FlowchartNode = ({ node, highlightedNodes, depth = 0 }: { node: TreeNode, highlightedNodes: string[], depth?: number }) => {
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'how', 'i', 'in', 'is',
+  'it', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where',
+  'which', 'who', 'why', 'with', 'you', 'your', 'about', 'into', 'over', 'under'
+])
+
+const extractKeywords = (input: string): string[] => {
+  if (!input.trim()) return []
+  const words = input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+
+  const unique: string[] = []
+  for (const w of words) {
+    if (w.length < 3 || STOPWORDS.has(w) || unique.includes(w)) continue
+    unique.push(w)
+    if (unique.length === 8) break
+  }
+  return unique
+}
+
+const collectNodeLookup = (nodes: TreeNode[], map: Map<string, TreeNode> = new Map()): Map<string, TreeNode> => {
+  for (const node of nodes) {
+    map.set(node.node_id, node)
+    if (node.nodes?.length) collectNodeLookup(node.nodes, map)
+  }
+  return map
+}
+
+const levelForDepth = (depth: number) => {
+  if (depth === 0) return 'Module'
+  if (depth === 1) return 'Chapter'
+  return 'Section'
+}
+
+const FlowchartNode = ({
+  node,
+  highlightedNodes,
+  hasActiveSelection,
+  depth = 0,
+}: {
+  node: TreeNode,
+  highlightedNodes: string[],
+  hasActiveSelection: boolean,
+  depth?: number
+}) => {
   const isHighlighted = highlightedNodes.includes(node.node_id)
+  const isDimmed = hasActiveSelection && !isHighlighted
   return (
-    <div style={{ marginLeft: depth > 0 ? 24 : 0 }}>
-      <div className={`flow-node ${isHighlighted ? 'highlighted' : ''}`}>
+    <div className="flow-branch" style={{ marginLeft: depth > 0 ? 20 : 0 }}>
+      <div className={`flow-node ${isHighlighted ? 'highlighted' : ''} ${isDimmed ? 'dimmed' : ''}`}>
+        <div className="flow-level-chip">{levelForDepth(depth)}</div>
         <div className="flow-title">
           <span>{node.title}</span>
           <span className={`node-chip ${isHighlighted ? 'highlighted' : ''}`}>{node.node_id}</span>
@@ -37,9 +86,19 @@ const FlowchartNode = ({ node, highlightedNodes, depth = 0 }: { node: TreeNode, 
           </div>
         )}
       </div>
-      {node.nodes?.map(child => (
-        <FlowchartNode key={child.node_id} node={child} highlightedNodes={highlightedNodes} depth={depth + 1} />
-      ))}
+      {node.nodes?.length ? (
+        <div className="flow-children">
+          {node.nodes.map(child => (
+            <FlowchartNode
+              key={child.node_id}
+              node={child}
+              highlightedNodes={highlightedNodes}
+              hasActiveSelection={hasActiveSelection}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -171,7 +230,20 @@ function App() {
   }
 
   const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant')
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
   const highlightedNodes = lastAssistantMsg?.nodes || []
+  const hasActiveSelection = highlightedNodes.length > 0
+  const traceQuery = lastUserMsg?.content || ''
+
+  const queryKeywords = useMemo(() => extractKeywords(traceQuery), [traceQuery])
+
+  const selectedChunks = useMemo(() => {
+    if (!tree || highlightedNodes.length === 0) return []
+    const lookup = collectNodeLookup(tree)
+    return highlightedNodes
+      .map((id) => lookup.get(id))
+      .filter((node): node is TreeNode => Boolean(node))
+  }, [tree, highlightedNodes])
 
   return (
     <>
@@ -299,15 +371,50 @@ function App() {
                <Plus size={16} style={{ transform: 'rotate(45deg)' }} />
             </button>
           </div>
+          <div className="query-mapping">
+            <div className="query-mapping-title">Query Mapping</div>
+            <div className="query-flow-row">
+              <div className="query-flow-step">
+                <div className="query-flow-label">Query</div>
+                <div className="query-flow-value">{traceQuery || 'Ask a question to view retrieval mapping.'}</div>
+              </div>
+              <div className="query-flow-arrow">-&gt;</div>
+              <div className="query-flow-step">
+                <div className="query-flow-label">Keyword Match</div>
+                <div className="query-chip-wrap">
+                  {queryKeywords.length ? queryKeywords.map((kw) => (
+                    <span key={kw} className="query-chip">{kw}</span>
+                  )) : <span className="query-flow-muted">No keywords yet.</span>}
+                </div>
+              </div>
+              <div className="query-flow-arrow">-&gt;</div>
+              <div className="query-flow-step">
+                <div className="query-flow-label">Retrieved Chunks</div>
+                <div className="query-chip-wrap">
+                  {selectedChunks.length ? selectedChunks.map((node) => (
+                    <span key={node.node_id} className="query-chip selected">{node.title}</span>
+                  )) : <span className="query-flow-muted">No chunks selected yet.</span>}
+                </div>
+              </div>
+            </div>
+            <div className="query-structure-bridge">Highlighted chunks are marked in the structure below.</div>
+          </div>
           <div className="flowchart-container">
             {!tree ? (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '40px' }}>
                  No document indexed yet.
               </div>
             ) : (
-              tree.map(node => (
-                 <FlowchartNode key={node.node_id} node={node} highlightedNodes={highlightedNodes} />
-              ))
+              <div className="flow-tree">
+                {tree.map(node => (
+                   <FlowchartNode
+                     key={node.node_id}
+                     node={node}
+                     highlightedNodes={highlightedNodes}
+                     hasActiveSelection={hasActiveSelection}
+                   />
+                ))}
+              </div>
             )}
           </div>
         </div>
