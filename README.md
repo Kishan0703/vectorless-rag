@@ -128,8 +128,7 @@ python -m py_compile main.py
 - Rotate keys if exposed
 - Restrict CORS origins before deploying to production
 
+
 ### License
-Add your preferred license here (for example, MIT).
-
-
+Add your preferred license here (for example, MIT)
 
