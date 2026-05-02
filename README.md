@@ -129,5 +129,4 @@ python -m py_compile main.py
 - Restrict CORS origins before deploying to production
 
 ### License
-
 Add your preferred license here (for example, MIT).
